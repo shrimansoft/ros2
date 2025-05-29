@@ -396,6 +396,106 @@ class RosbagAnnotator(Node):
             self.get_logger().info(f"Loaded {len(self.annotations)} annotations from {input_path}")
         except Exception as e:
             self.get_logger().error(f"Failed to load annotations: {e}")
+    
+    def check_and_load_bag_annotations(self, bag_path: str) -> bool:
+        """Check for and load annotations from an exported annotated bag file"""
+        try:
+            # Validate bag path
+            if not os.path.exists(bag_path):
+                error_msg = f"Bag path does not exist: {bag_path}"
+                logging.error(error_msg)
+                return False
+            
+            if not os.path.isdir(bag_path):
+                error_msg = f"Bag path is not a directory: {bag_path}"
+                logging.error(error_msg)
+                return False
+            
+            # Find the database file
+            try:
+                db_files = [f for f in os.listdir(bag_path) if f.endswith('.db3')]
+                if not db_files:
+                    error_msg = f"No database file found in bag directory: {bag_path}"
+                    logging.error(error_msg)
+                    return False
+                
+                logging.info(f"Found database files: {db_files}")
+                db_path = os.path.join(bag_path, db_files[0])
+                logging.debug(f"Using database: {db_path}")
+                
+            except Exception as e:
+                error_msg = f"Error accessing bag directory: {e}"
+                logging.error(error_msg)
+                return False
+            
+            # Connect to database and check for annotations
+            conn = None
+            try:
+                conn = sqlite3.connect(db_path)
+                cursor = conn.cursor()
+                logging.debug("Connected to database successfully")
+                
+                # Check if /ev_annotations topic exists
+                cursor.execute("SELECT name FROM topics WHERE name = '/ev_annotations'")
+                result = cursor.fetchone()
+                
+                if result:
+                    logging.info("Annotations found in bag file")
+                    
+                    # Load annotation messages
+                    cursor.execute("""
+                        SELECT timestamp, data FROM messages 
+                        WHERE topic_id = (SELECT id FROM topics WHERE name = '/ev_annotations') 
+                        ORDER BY timestamp
+                    """)
+                    
+                    rows = cursor.fetchall()
+                    logging.debug(f"Found {len(rows)} annotation messages")
+                    
+                    for timestamp, data in rows:
+                        try:
+                            # Deserialize the String message containing JSON annotation data
+                            msg_type = get_message('std_msgs/msg/String')
+                            msg = deserialize_message(data, msg_type)
+                            
+                            # Parse the JSON annotation data
+                            annotation_data = json.loads(msg.data)
+                            
+                            # Convert to simplified dictionary format
+                            annotation = {
+                                'timestamp': timestamp,
+                                'annotation_id': annotation_data.get('id', ''),
+                                'type': annotation_data.get('type', ''),
+                                'text': annotation_data.get('text', ''),
+                                'confidence': annotation_data.get('confidence', 0.0),
+                                'datetime': annotation_data.get('datetime', datetime.fromtimestamp(timestamp / 1e9).isoformat())
+                            }
+                            
+                            self.annotations.append(annotation)
+                        except Exception as e:
+                            logging.warning(f"Failed to deserialize annotation message: {e}")
+                            continue
+                    
+                    conn.close()
+                    logging.info(f"Loaded {len(self.annotations)} annotations from bag file")
+                    return True
+                
+                else:
+                    logging.info("No annotations found in bag file")
+                    if conn is not None:
+                        conn.close()
+                    return False
+            
+            except Exception as e:
+                error_msg = f"Database operation failed: {e}"
+                logging.error(error_msg, exc_info=True)
+                if conn is not None:
+                    conn.close()
+                return False
+            
+        except Exception as e:
+            logging.error(f"Error checking/loading bag annotations: {e}", exc_info=True)
+            return False
 
 class AnnotationGUI:
     def __init__(self, annotator: RosbagAnnotator):
@@ -608,6 +708,7 @@ class AnnotationGUI:
         file_menu.add_separator()
         file_menu.add_command(label="Save Annotations", command=self.save_annotations)
         file_menu.add_command(label="Load Annotations", command=self.load_annotations_file)
+        file_menu.add_command(label="Import from Annotated Bag", command=self.import_from_annotated_bag)
         file_menu.add_separator()
         file_menu.add_command(label="Export Annotated Bag", command=self.export_annotated_bag)
         file_menu.add_separator()
@@ -663,6 +764,11 @@ class AnnotationGUI:
                 success_msg = (f"Loaded bag file: {bag_path}\n"
                              f"Topics found: {len(self.annotator.available_topics)}\n"
                              f"Video topics: {len(self.annotator.video_topics)}")
+                
+                # Check if annotations were loaded from the bag
+                if hasattr(self.annotator, 'annotations') and self.annotator.annotations:
+                    success_msg += f"\n✓ Found and loaded {len(self.annotator.annotations)} existing annotations from bag"
+                
                 logging.info(success_msg)
                 messagebox.showinfo("Success", success_msg)
             else:
@@ -988,141 +1094,306 @@ class AnnotationGUI:
             self.update_annotations_list()
             messagebox.showinfo("Success", f"Annotations loaded from {file_path}")
     
-    def _ask_export_name(self):
-        """Ask user for a custom export name"""
-        from tkinter import simpledialog
+    def import_from_annotated_bag(self):
+        """Import annotations from a previously exported annotated bag file"""
+        # Default to /data directory (mounted from host)
+        initial_dir = "/data" if os.path.exists("/data") else os.path.expanduser("~")
         
-        # Generate default name based on timestamp
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        default_name = f"annotated_bag_{timestamp}"
+        # Show info about the feature
+        info_msg = "Import Annotations from Annotated Bag\n\n"
+        info_msg += "This feature allows you to load annotations from bag files that were previously exported with annotations.\n"
+        info_msg += "Select a bag directory that contains the /ev_annotations topic."
         
-        # Prompt user for custom name
-        name = simpledialog.askstring(
-            "Export Name",
-            "Enter a name for the exported bag file:",
-            initialvalue=default_name
+        messagebox.showinfo("Import Annotations", info_msg)
+        
+        bag_path = filedialog.askdirectory(
+            title="Select Annotated Bag Directory", 
+            initialdir=initial_dir
         )
         
-        if name:
-            # Clean the name to be filesystem-safe
-            import re
-            name = re.sub(r'[<>:"/\\|?*]', '_', name)
-            name = name.strip()
-            
-        return name
+        if not bag_path:
+            return
+        
+        # Try to load annotations from the bag
+        if self.annotator.check_and_load_bag_annotations(bag_path):
+            self.update_annotations_list()
+            messagebox.showinfo("Success", 
+                               f"Imported {len(self.annotator.annotations)} annotations from {bag_path}\n\n"
+                               "You can now edit these annotations and export them to a new bag file.")
+        else:
+            messagebox.showwarning("No Annotations Found", 
+                                  f"No annotations found in the selected bag: {bag_path}\n\n"
+                                  "Make sure the bag was exported with annotations and contains the /ev_annotations topic.")
 
     def export_annotated_bag(self):
-        """Export a new bag file with annotations"""
+        """Export current annotations to a new annotated bag file"""
         if not self.annotator.annotations:
             messagebox.showwarning("Warning", "No annotations to export")
             return
         
         if not self.annotator.current_bag_path:
-            messagebox.showwarning("Warning", "No bag file loaded")
+            messagebox.showwarning("Warning", 
+                                  "No bag file loaded. Please load a bag file first.")
             return
-        
-        # Ask for custom export name
-        export_name = self._ask_export_name()
-        if not export_name:
-            return  # User cancelled or didn't provide a name
         
         # Default to /data directory (mounted from host)
         initial_dir = "/data" if os.path.exists("/data") else os.path.expanduser("~")
+        
+        # Show info about the feature
+        info_msg = f"Export Annotated Bag\n\n"
+        info_msg += f"This will create a new bag file containing:\n"
+        info_msg += f"• Original bag data from: {os.path.basename(self.annotator.current_bag_path)}\n"
+        info_msg += f"• {len(self.annotator.annotations)} annotations as /ev_annotations topic\n\n"
+        info_msg += f"Select the output directory for the annotated bag."
+        
+        result = messagebox.askokcancel("Export Annotated Bag", info_msg)
+        if not result:
+            return
+        
         output_dir = filedialog.askdirectory(
-            title="Select Output Directory",
+            title="Select Output Directory for Annotated Bag",
             initialdir=initial_dir
         )
-        if output_dir:
-            self._perform_export(output_dir, export_name)
-    
-    def _perform_export(self, output_dir, export_name):
-        """Perform the actual export process"""
-        import tempfile
-        import subprocess
-        import threading
+        
+        if not output_dir:
+            return
+        
+        # Generate output bag name
+        input_bag_name = os.path.basename(self.annotator.current_bag_path)
+        output_bag_name = f"annotated_{input_bag_name}"
+        output_bag_path = os.path.join(output_dir, output_bag_name)
+        
+        # Check if output directory already exists
+        if os.path.exists(output_bag_path):
+            overwrite = messagebox.askyesno("Directory Exists", 
+                                           f"Output directory already exists:\n{output_bag_path}\n\n"
+                                           "Do you want to overwrite it?")
+            if not overwrite:
+                return
+            
+            # Remove existing directory
+            import shutil
+            shutil.rmtree(output_bag_path)
         
         try:
-            # Create temporary annotations file
-            temp_annotations_file = tempfile.mktemp(suffix='.json')
-            self.annotator.save_annotations(temp_annotations_file)
-            
-            # Use the custom export name
-            output_bag_path = os.path.join(output_dir, export_name)
-            
             # Show progress dialog
-            progress_dialog = tk.Toplevel(self.root)
-            progress_dialog.title("Exporting Annotated Bag")
-            progress_dialog.geometry("400x150")
-            progress_dialog.transient(self.root)
-            progress_dialog.grab_set()
+            progress_window = tk.Toplevel(self.root)
+            progress_window.title("Exporting Annotated Bag")
+            progress_window.geometry("400x150")
+            progress_window.transient(self.root)
+            progress_window.grab_set()
             
-            ttk.Label(progress_dialog, text="Creating annotated bag file...").pack(pady=20)
+            # Center the progress window
+            progress_window.geometry("+%d+%d" % (
+                self.root.winfo_rootx() + 50,
+                self.root.winfo_rooty() + 50
+            ))
             
-            progress_bar = ttk.Progressbar(progress_dialog, mode='indeterminate')
-            progress_bar.pack(pady=10, padx=20, fill=tk.X)
-            progress_bar.start()
+            tk.Label(progress_window, text="Creating annotated bag file...", 
+                    font=("Arial", 12)).pack(pady=20)
+            progress_label = tk.Label(progress_window, text="Initializing...", 
+                                     font=("Arial", 10))
+            progress_label.pack(pady=10)
             
-            status_label = ttk.Label(progress_dialog, text="Initializing...")
-            status_label.pack(pady=5)
+            progress_window.update()
             
-            # Function to run the merger in a separate thread
-            def run_merger():
-                try:
-                    status_label.config(text="Running annotation merger...")
-                    
-                    # Run the annotation merger script
-                    cmd = [
-                        'python3', 
-                        '-m', 'rosbag_annotator.scripts.annotation_merger',
-                        self.annotator.current_bag_path,
-                        temp_annotations_file,
-                        output_bag_path
-                    ]
-                    
-                    result = subprocess.run(cmd, capture_output=True, text=True, cwd='/ros2_ws/src/rosbag_annotator')
-                    
-                    # Clean up temporary file
-                    os.unlink(temp_annotations_file)
-                    
-                    # Update UI on main thread
-                    def update_ui():
-                        progress_bar.stop()
-                        progress_dialog.destroy()
-                        
-                        if result.returncode == 0:
-                            messagebox.showinfo(
-                                "Export Successful", 
-                                f"Annotated bag created successfully!\n\nOutput: {output_bag_path}\n\nThe bag now contains:\n"
-                                f"• All original topics and data\n"
-                                f"• New '/ev_annotations' topic with {len(self.annotator.annotations)} annotations\n"
-                                f"• Support for multi-topic video display"
-                            )
-                        else:
-                            error_msg = f"Export failed!\n\nError: {result.stderr}\n\nStdout: {result.stdout}"
-                            messagebox.showerror("Export Failed", error_msg)
-                    
-                    self.root.after(0, update_ui)
-                    
-                except Exception as e:
-                    # Clean up temporary file
-                    if os.path.exists(temp_annotations_file):
-                        os.unlink(temp_annotations_file)
-                    
-                    # Update UI on main thread
-                    def update_ui():
-                        progress_bar.stop()
-                        progress_dialog.destroy()
-                        messagebox.showerror("Export Error", f"An error occurred during export:\n\n{str(e)}")
-                    
-                    self.root.after(0, update_ui)
+            # Create the annotated bag using the existing annotation merger logic
+            success = self._create_annotated_bag_file(
+                self.annotator.current_bag_path, 
+                self.annotator.annotations, 
+                output_bag_path,
+                progress_label,
+                progress_window
+            )
             
-            # Start merger in background thread
-            merger_thread = threading.Thread(target=run_merger)
-            merger_thread.daemon = True
-            merger_thread.start()
+            progress_window.destroy()
+            
+            if success:
+                messagebox.showinfo("Export Successful", 
+                                   f"Annotated bag exported successfully!\n\n"
+                                   f"Location: {output_bag_path}\n"
+                                   f"Contains: {len(self.annotator.annotations)} annotations\n\n"
+                                   f"You can now share this annotated bag or import it later for further editing.")
+            else:
+                messagebox.showerror("Export Failed", 
+                                    f"Failed to export annotated bag to:\n{output_bag_path}\n\n"
+                                    f"Check the console for error details.")
+        
+        except Exception as e:
+            logging.error(f"Error during bag export: {e}", exc_info=True)
+            messagebox.showerror("Export Error", 
+                               f"An error occurred during export:\n{str(e)}")
+
+    def _create_annotated_bag_file(self, input_bag_path, annotations, output_bag_path, progress_label, progress_window):
+        """Create annotated bag file with integrated annotation merger logic"""
+        try:
+            import shutil
+            import yaml
+            from rclpy.serialization import serialize_message
+            from std_msgs.msg import String
+            import sqlite3
+            
+            # Step 1: Copy original bag structure
+            progress_label.config(text="Copying original bag structure...")
+            progress_window.update()
+            
+            os.makedirs(output_bag_path, exist_ok=True)
+            
+            # Find and copy database file
+            db_files = [f for f in os.listdir(input_bag_path) if f.endswith('.db3')]
+            if not db_files:
+                logging.error(f"No database file found in {input_bag_path}")
+                return False
+            
+            input_db = os.path.join(input_bag_path, db_files[0])
+            output_db = os.path.join(output_bag_path, 'rosbag2_annotated.db3')
+            shutil.copy2(input_db, output_db)
+            
+            # Step 2: Copy and modify metadata
+            progress_label.config(text="Updating metadata...")
+            progress_window.update()
+            
+            input_metadata = os.path.join(input_bag_path, 'metadata.yaml')
+            output_metadata = os.path.join(output_bag_path, 'metadata.yaml')
+            
+            with open(input_metadata, 'r') as f:
+                metadata = yaml.safe_load(f)
+            
+            # Add annotation topic to metadata
+            annotation_topic = {
+                'topic_metadata': {
+                    'name': '/ev_annotations',
+                    'type': 'std_msgs/msg/String',
+                    'serialization_format': 'cdr',
+                    'offered_qos_profiles': '''- history: 3
+  depth: 0
+  reliability: 1
+  durability: 2
+  deadline:
+    sec: 9223372036
+    nsec: 854775807
+  lifespan:
+    sec: 9223372036
+    nsec: 854775807
+  liveliness: 1
+  liveliness_lease_duration:
+    sec: 9223372036
+    nsec: 854775807
+  avoid_ros_namespace_conventions: false'''
+                },
+                'message_count': len(annotations)
+            }
+            
+            metadata['rosbag2_bagfile_information']['topics_with_message_count'].append(annotation_topic)
+            metadata['rosbag2_bagfile_information']['relative_file_paths'] = ['rosbag2_annotated.db3']
+            metadata['rosbag2_bagfile_information']['files'][0]['path'] = 'rosbag2_annotated.db3'
+            metadata['rosbag2_bagfile_information']['message_count'] += len(annotations)
+            
+            with open(output_metadata, 'w') as f:
+                yaml.dump(metadata, f, default_flow_style=False)
+            
+            # Step 3: Add annotations to database
+            progress_label.config(text="Adding annotations to bag...")
+            progress_window.update()
+            
+            conn = sqlite3.connect(output_db)
+            cursor = conn.cursor()
+            
+            try:
+                # Check if annotation topic already exists
+                cursor.execute("SELECT id FROM topics WHERE name = '/ev_annotations'")
+                existing_topic = cursor.fetchone()
+                
+                if existing_topic:
+                    # Topic already exists, use its ID
+                    annotation_topic_id = existing_topic[0]
+                    logging.info(f"Using existing annotation topic with ID: {annotation_topic_id}")
+                    
+                    # Clear existing annotation messages to replace them with new ones
+                    cursor.execute("DELETE FROM messages WHERE topic_id = ?", (annotation_topic_id,))
+                    logging.info("Cleared existing annotation messages")
+                else:
+                    # Find a suitable topic ID that doesn't conflict
+                    cursor.execute("SELECT MAX(id) FROM topics")
+                    max_id = cursor.fetchone()[0]
+                    annotation_topic_id = (max_id + 1) if max_id is not None else 1
+                    
+                    # Add annotation topic to topics table
+                    cursor.execute("""
+                        INSERT INTO topics (id, name, type, serialization_format, offered_qos_profiles)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (
+                        annotation_topic_id,
+                        '/ev_annotations',
+                        'std_msgs/msg/String',
+                        'cdr',
+                        '''- history: 3
+  depth: 0
+  reliability: 1
+  durability: 2
+  deadline:
+    sec: 9223372036
+    nsec: 854775807
+  lifespan:
+    sec: 9223372036
+    nsec: 854775807
+  liveliness: 1
+  liveliness_lease_duration:
+    sec: 9223372036
+    nsec: 854775807
+  avoid_ros_namespace_conventions: false'''
+                    ))
+                    logging.info(f"Created new annotation topic with ID: {annotation_topic_id}")
+                
+                # Add annotation messages
+                message_count = 0
+                for i, annotation in enumerate(annotations):
+                    progress_label.config(text=f"Adding annotation {i+1}/{len(annotations)}...")
+                    progress_window.update()
+                    
+                    # Create ROS message
+                    msg = String()
+                    
+                    # Create structured annotation data
+                    annotation_data = {
+                        'id': annotation['annotation_id'],
+                        'type': annotation['type'],
+                        'text': annotation['text'],
+                        'confidence': annotation['confidence'],
+                        'datetime': annotation['datetime']
+                    }
+                    
+                    msg.data = json.dumps(annotation_data)
+                    
+                    # Serialize message
+                    serialized_msg = serialize_message(msg)
+                    
+                    # Insert into messages table
+                    cursor.execute("""
+                        INSERT INTO messages (topic_id, timestamp, data)
+                        VALUES (?, ?, ?)
+                    """, (annotation_topic_id, annotation['timestamp'], serialized_msg))
+                    
+                    message_count += 1
+                
+                conn.commit()
+                logging.info(f"Added {message_count} annotation messages to bag")
+                
+            except Exception as e:
+                conn.rollback()
+                logging.error(f"Error adding annotations to database: {e}")
+                raise
+            finally:
+                conn.close()
+            
+            progress_label.config(text="Export completed successfully!")
+            progress_window.update()
+            
+            return True
             
         except Exception as e:
-            messagebox.showerror("Export Error", f"Failed to start export process:\n\n{str(e)}")
+            logging.error(f"Error creating annotated bag: {e}", exc_info=True)
+            return False
 
     def run(self):
         """Run the GUI application"""

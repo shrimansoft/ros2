@@ -97,16 +97,34 @@ class AnnotationMerger(Node):
         cursor = conn.cursor()
         
         try:
-            # Add annotation topic to topics table
-            cursor.execute("""
-                INSERT INTO topics (id, name, type, serialization_format, offered_qos_profiles)
-                VALUES (?, ?, ?, ?, ?)
-            """, (
-                999,  # Use a high ID that shouldn't conflict
-                '/ev_annotations',
-                'std_msgs/msg/String',
-                'cdr',
-                '''- history: 3
+            # Check if annotation topic already exists
+            cursor.execute("SELECT id FROM topics WHERE name = '/ev_annotations'")
+            existing_topic = cursor.fetchone()
+            
+            if existing_topic:
+                # Topic already exists, use its ID
+                annotation_topic_id = existing_topic[0]
+                self.get_logger().info(f"Using existing annotation topic with ID: {annotation_topic_id}")
+                
+                # Clear existing annotation messages to replace them with new ones
+                cursor.execute("DELETE FROM messages WHERE topic_id = ?", (annotation_topic_id,))
+                self.get_logger().info("Cleared existing annotation messages")
+            else:
+                # Find a suitable topic ID that doesn't conflict
+                cursor.execute("SELECT MAX(id) FROM topics")
+                max_id = cursor.fetchone()[0]
+                annotation_topic_id = (max_id + 1) if max_id is not None else 1
+                
+                # Add annotation topic to topics table
+                cursor.execute("""
+                    INSERT INTO topics (id, name, type, serialization_format, offered_qos_profiles)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (
+                    annotation_topic_id,
+                    '/ev_annotations',
+                    'std_msgs/msg/String',
+                    'cdr',
+                    '''- history: 3
   depth: 0
   reliability: 1
   durability: 2
@@ -121,7 +139,8 @@ class AnnotationMerger(Node):
     sec: 9223372036
     nsec: 854775807
   avoid_ros_namespace_conventions: false'''
-            ))
+                ))
+                self.get_logger().info(f"Created new annotation topic with ID: {annotation_topic_id}")
             
             # Add annotation messages
             message_count = 0
@@ -147,7 +166,7 @@ class AnnotationMerger(Node):
                 cursor.execute("""
                     INSERT INTO messages (topic_id, timestamp, data)
                     VALUES (?, ?, ?)
-                """, (999, annotation['timestamp'], serialized_msg))
+                """, (annotation_topic_id, annotation['timestamp'], serialized_msg))
                 
                 message_count += 1
             
