@@ -5,7 +5,14 @@
 
 set -e
 
-DATA_DIR="./rosbag_annotator/data"
+# Try to find the data directory
+if [ -d "./data" ]; then
+    DATA_DIR="./data"
+elif [ -d "./rosbag_annotator/data" ]; then
+    DATA_DIR="./rosbag_annotator/data"
+else
+    DATA_DIR="./data"  # Default to data/ and create if needed
+fi
 
 # Ensure data directory exists
 mkdir -p "$DATA_DIR"

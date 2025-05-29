@@ -27,7 +27,7 @@ echo ""
 
 # Check Docker image
 echo "🖼️  Docker Image:"
-if docker images | grep -q "shriman1:a"; then
+if docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "shriman1:a"; then
     echo "✅ shriman1:a image found"
     docker images shriman1:a --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedSince}}"
 else
@@ -63,9 +63,14 @@ echo ""
 
 # Check data directory
 echo "📁 Data Directory:"
-if [ -d "rosbag_annotator/data" ]; then
-    size=$(du -sh rosbag_annotator/data 2>/dev/null | cut -f1)
-    files=$(find rosbag_annotator/data -type f 2>/dev/null | wc -l)
+if [ -d "rosbag_annotator/data" ] || [ -d "data" ]; then
+    if [ -d "rosbag_annotator/data" ]; then
+        data_dir="rosbag_annotator/data"
+    else
+        data_dir="data"
+    fi
+    size=$(du -sh "$data_dir" 2>/dev/null | cut -f1)
+    files=$(find "$data_dir" -type f 2>/dev/null | wc -l)
     echo "✅ Data directory exists: $size in $files files"
 else
     echo "⚠️  Data directory not found (will be created automatically)"
@@ -74,7 +79,7 @@ echo ""
 
 # Test container startup
 echo "🧪 Container Test:"
-if docker run --rm shriman1:a echo "Container test successful" 2>/dev/null; then
+if docker run --rm shriman1:a bash -c "echo 'Container test successful'" 2>/dev/null; then
     echo "✅ Container can start successfully"
 else
     echo "❌ Container startup failed"
