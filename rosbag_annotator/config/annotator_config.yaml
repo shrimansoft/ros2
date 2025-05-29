@@ -1,0 +1,33 @@
+# ROS2 Bag Annotator Configuration
+
+# Annotation types and their descriptions
+annotation_types:
+  safety: "Safe driving conditions"
+  danger: "Dangerous situations (dengue areas, hazards)"
+  comment: "General observations"
+  traffic_sign: "Traffic signs and signals"
+  pedestrian: "Pedestrian activity"
+  vehicle: "Vehicle interactions"
+  road_condition: "Road surface conditions"
+  weather: "Weather conditions"
+
+# Default annotation settings
+defaults:
+  confidence: 1.0
+  annotation_type: "comment"
+
+# Video display settings
+video:
+  max_width: 640
+  max_height: 480
+  fps: 30
+
+# Export settings
+export:
+  annotation_topic: "/ev_annotations"
+  include_original_topics: true
+  
+# File paths
+paths:
+  annotations_dir: "annotations"
+  export_dir: "annotated_bags"
