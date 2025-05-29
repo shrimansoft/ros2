@@ -1,0 +1,83 @@
+services:
+  ros2-annotator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: shriman1:a
+    container_name: ros2_annotator
+    environment:
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=graphics,utility,compute
+    volumes:
+      # X11 forwarding
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - /etc/localtime:/etc/localtime:ro
+      
+      # Data and configuration
+      - ./rosbag_annotator/data:/data
+      - ./rosbag_annotator/config:/config
+      - ./logs:/logs
+      
+      # Development (optional)
+      - ./rosbag_annotator:/ros2_ws/src/rosbag_annotator:ro
+    
+    network_mode: host
+    stdin_open: true
+    tty: true
+    
+    # GPU support (uncomment if you have nvidia-docker)
+    # runtime: nvidia
+    
+    # Alternative GPU support for newer Docker versions
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    
+    command: bash
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import rclpy; print('ROS2 OK')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Alternative service for annotation GUI
+  annotator-gui:
+    extends: ros2-annotator
+    container_name: ros2_annotator_gui
+    command: >
+      bash -c "
+        source /opt/ros/humble/setup.bash &&
+        cd /ros2_ws &&
+        python3 src/rosbag_annotator/scripts/annotation_gui.py
+      "
+    depends_on:
+      - ros2-annotator
+
+volumes:
+  # Persistent data volumes
+  bag_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./rosbag_annotator/data
+  
+  annotation_logs:
+    driver: local
+    driver_opts:
+      type: none  
+      o: bind
+      device: ./logs
+
+networks:
+  default:
+    name: ros2_network

@@ -36,7 +36,9 @@ RUN python3 -m pip install --upgrade pip && \
     opencv-python==4.8.1.78 \
     Pillow==10.0.1 \
     numpy==1.24.3 \
-    PyYAML==6.0.1
+    PyYAML==6.0.1 \
+    pytest==7.4.0 \
+    pytest-mock==3.11.1
 
 # Create workspace
 WORKDIR /ros2_ws
