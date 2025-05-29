@@ -7,16 +7,24 @@
 ## 🎯 Quick Start (TL;DR)
 
 ```bash
-# 1. Build the container
-sudo docker build -t shriman1:a .
+# 1. Clone and setup
+git clone <your-repo-url>
+cd ros2-bag-annotator
+make setup
 
-# 2. Run with GPU acceleration
-sudo ./run2.bash
+# 2. Add your bag files
+./scripts/bag_utils.bash copy /path/to/your/bag
 
-# 3. Inside container - test everything works
-source /opt/ros/humble/setup.bash
-nvidia-smi  # Check GPU
-rviz2       # Launch visualization
+# 3. Start annotating
+make annotate
+
+# Alternative: Quick start for new users
+make quick
+```
+
+### 🚀 Even Quicker with Docker Compose
+```bash
+docker-compose up annotator-gui
 ```
 
 ---
@@ -126,25 +134,91 @@ ros2-docker/
 
 ---
 
-## 🎮 What You Can Do
+## 📁 Repository Structure
 
-### 🤖 **Robot Development**
-- **Simulate robots** in Gazebo with realistic physics
-- **Visualize sensor data** in RViz2 with smooth 3D rendering
-- **Connect real hardware** via USB (sensors, microcontrollers)
-- **Develop ROS2 nodes** with full IDE support
+```
+ros2-bag-annotator/
+├── 🐳 Docker Infrastructure
+│   ├── Dockerfile              # ROS2 + GPU container definition
+│   ├── docker-compose.yml      # Alternative to bash scripts  
+│   └── run_annotator.bash      # Container execution script
+│
+├── 🔧 Build & Development
+│   ├── Makefile                # Convenient build commands
+│   ├── requirements.txt        # Python dependencies
+│   └── .dockerignore           # Docker build optimization
+│
+├── 🤖 Core Application
+│   └── rosbag_annotator/       # Main ROS2 package
+│       ├── scripts/            # Python applications
+│       ├── config/             # Configuration files
+│       ├── launch/             # ROS2 launch files
+│       └── CMakeLists.txt      # Build configuration
+│
+├── 🛠️ Utilities
+│   └── scripts/                # Helper scripts
+│       ├── health_check.bash   # System diagnostics
+│       ├── bag_utils.bash      # Bag file management
+│       └── quick_annotate.bash # New user onboarding
+│
+├── 🧪 Testing
+│   └── tests/
+│       ├── unit/               # Unit tests
+│       ├── integration/        # End-to-end tests
+│       └── test_data/          # Sample data for testing
+│
+├── 📚 Documentation
+│   └── docs/
+│       ├── SETUP.md            # Installation guide
+│       ├── USAGE.md            # User manual
+│       └── API.md              # Technical documentation
+│
+└── 📊 Data & Logs
+    ├── data/                   # Bag files and outputs
+    └── logs/                   # Application logs
+```
 
-### 🏗️ **AI/ML Robotics**
-- **CUDA acceleration** for neural networks
-- **GPU-accelerated computer vision** with OpenCV
-- **Real-time processing** for autonomous navigation
-- **Machine learning** model training and inference
+## 🎯 What This Project Does
 
-### 🔧 **Hardware Integration**
-- **Arduino programming** with included CLI tools
-- **Sensor integration** through USB passthrough
-- **Real robot control** with direct hardware access
-- **Custom electronics** development and testing
+This is a **professional-grade ROS2 bag annotation tool** that allows you to:
+
+1. **📹 Load and playback** ROS2 bag files with video visualization
+2. **✏️ Add timestamped annotations** (safety notes, hazards, observations)
+3. **🎮 Interactive GUI** with timeline navigation and playback controls
+4. **📤 Export enhanced bags** with embedded annotation data
+5. **🐳 Run in Docker** for consistent cross-platform deployment
+6. **⚡ GPU acceleration** for smooth video rendering
+
+## 🚀 Available Commands
+
+### Essential Commands
+```bash
+make setup          # First-time setup (build + health check)
+make annotate       # Launch annotation GUI
+make health         # System health check
+make quick          # Guided setup for new users
+```
+
+### Bag Management
+```bash
+make bags                                    # List available bags
+./scripts/bag_utils.bash copy /path/to/bag   # Add new bag
+./scripts/bag_utils.bash info my_bag         # Show bag details
+```
+
+### Development
+```bash
+make dev            # Development environment
+make test           # Run all tests
+make docker-compose # Alternative using Docker Compose
+```
+
+### Alternative: Docker Compose
+```bash
+docker-compose up annotator-gui    # Start GUI
+docker-compose up --build          # Full rebuild and start
+docker-compose run ros2-annotator bash  # Development shell
+```
 
 ---
 
